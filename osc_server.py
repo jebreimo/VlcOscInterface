@@ -28,14 +28,13 @@ class VlcClient:
             print(f"Failed to send command: {e}")
 
 
-# def send_command(command):
-#     url = f"http://raspberrypi:8080/requests/status.xml?{command}"
-#     print(url)
-#     try:
-#         response = requests.get(url, auth=("", "mam6tmoh"), timeout=0.1)
-#         response.raise_for_status()
-#     except requests.exceptions.RequestException as e:
-#         print(f"Failed to send command: {e}")
+class VlcMultiClient:
+    def __init__(self, clients: [VlcClient]):
+        self.clients = clients
+
+    def send_command(self, command):
+        for client in self.clients:
+            client.send_command(command)
 
 
 commands = {
@@ -52,12 +51,16 @@ class OscMessageHandler:
     def __init__(self, vlc_clients):
         assert len(vlc_clients) != 0
         self.vlc_clients = vlc_clients
+        self.vlc_multi_client = VlcMultiClient(vlc_clients)
 
     def parse_address(self, address: str):
         parts = [p for p in address.split("/") if p]
-        if len(parts) == 2:
-            return self.vlc_clients[int(parts[0])], parts[1]
-        raise ValueError(f"Invalid address: {address}")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid address: {address}")
+        vlc_id = int(parts[0])
+        if vlc_id == 0:
+            return self.vlc_multi_client, parts[1]
+        return self.vlc_clients[vlc_id-1], parts[1]
 
     def handle_message(self, addr, *values):
         client, command = self.parse_address(addr)
@@ -76,7 +79,7 @@ def main():
                         help="The ip to listen on for OSC messages")
     parser.add_argument("--port", type=int, default=5005,
                         help="The port to listen on for OSC messages")
-    parser.add_argument("--vlc", default=[],
+    parser.add_argument("--vlc", default=[], metavar="URL",
                         action="append",
                         help="The URL of the VLC web interface")
     parser.add_argument("--pwd", action="append", default=[],
@@ -97,11 +100,11 @@ def main():
         vlc_clients.append(VlcClient(url, pwd))
 
     handler = OscMessageHandler(vlc_clients)
+    dispatcher.map(f"/0/*", handler.handle_message)
+
     for i, client in enumerate(vlc_clients):
-        print(f"Mapping /{i}/* to {client.url}")
-        dispatcher.map(f"/{i}/*", handler.handle_message)
-    # for command in commands:
-    #     dispatcher.map(command, handler.handle_message)
+        print(f"Mapping /{i+1}/* to {client.url}")
+        dispatcher.map(f"/{i+1}/*", handler.handle_message)
 
     server = osc_server.ThreadingOSCUDPServer(
         (args.ip, args.port), dispatcher)
