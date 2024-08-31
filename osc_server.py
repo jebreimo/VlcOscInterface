@@ -55,18 +55,29 @@ class OscMessageHandler:
 
     def parse_address(self, address: str):
         parts = [p for p in address.split("/") if p]
+        if len(parts) == 1:
+            return self.vlc_multi_client, parts[0]
+
         if len(parts) != 2:
             raise ValueError(f"Invalid address: {address}")
+
         vlc_id = int(parts[0])
-        if vlc_id == 0:
-            return self.vlc_multi_client, parts[1]
+        if vlc_id == 0 or vlc_id > len(self.vlc_clients):
+            raise ValueError(f"Invalid VLC id: {vlc_id}")
+
         return self.vlc_clients[vlc_id-1], parts[1]
 
     def handle_message(self, addr, *values):
-        client, command = self.parse_address(addr)
+        try:
+            client, command = self.parse_address(addr)
+        except ValueError as e:
+            print(e)
+            return
+
         if command not in commands:
             print(f"Unknown command: {addr}")
             return
+
         command, arg_func = commands[command]
         arg = arg_func(values) if arg_func else ""
         client.send_command(f"command={command}&{arg}" if arg
@@ -81,7 +92,9 @@ def main():
                         help="The port to listen on for OSC messages")
     parser.add_argument("--vlc", default=[], metavar="URL",
                         action="append",
-                        help="The URL of the VLC web interface")
+                        help="The URL of the VLC web interface. Multiple VLC"
+                             " instances can be controlled by repeated --vlc"
+                             " options.")
     parser.add_argument("--pwd", action="append", default=[],
                         help="The password for the VLC web interfaces. If there"
                              " are multiple interfaces with different"
@@ -100,7 +113,8 @@ def main():
         vlc_clients.append(VlcClient(url, pwd))
 
     handler = OscMessageHandler(vlc_clients)
-    dispatcher.map(f"/0/*", handler.handle_message)
+    for command in commands:
+        dispatcher.map(f"/{command}", handler.handle_message)
 
     for i, client in enumerate(vlc_clients):
         print(f"Mapping /{i+1}/* to {client.url}")
